@@ -1,0 +1,31 @@
+# AR Laparoscopy Backend Requirements
+
+# FastAPI и веб-фреймворки
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+
+# ML и обработка изображений
+torch==2.1.2
+torchvision==0.16.2
+TotalSegmentator==2.0.5
+nibabel==5.2.0
+numpy==1.24.3
+scipy>=1.10.0
+scikit-image==0.22.0
+
+# 3D обработка
+trimesh==4.0.10
+
+# Обработка DICOM
+pydicom>=2.4.0
+dicom2nifti>=2.4.0
+
+# Утилиты
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.0.0
+aiofiles==23.2.1
+
+# Логирование и мониторинг
+structlog==23.2.0
