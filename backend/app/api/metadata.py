@@ -18,7 +18,7 @@ router = APIRouter()
 
 
 @router.get("/metadata/{job_id}")
-async def get_metadata(job_id: str = Path(..., min_length=1, max_length=100)):
+async def get_metadata(job_id: str = Path(min_length=1, max_length=100, title="Job ID")):
     """
     Get metadata including displacement vectors for a job.
     
