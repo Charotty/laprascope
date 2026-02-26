@@ -186,7 +186,8 @@ def segment_kidneys(job_id: str, input_path: str, output_dir: str, use_downsampl
                     nr_thr_saving=1,
                     roi_subset=["kidney_left", "kidney_right"],
                     fast=True,
-                    device="cpu"
+                    device="cpu",
+                    reorient_nifti=False  # Отключаем переориентацию для проблемных DICOM
                 )
                 
                 logger.info("Segmentation completed successfully!")
@@ -203,6 +204,24 @@ def segment_kidneys(job_id: str, input_path: str, output_dir: str, use_downsampl
                     original_error=e,
                     details={"job_id": job_id}
                 )
+            except Exception as e:
+                # Обрабатываем специфичные ошибки DICOM
+                if "IMAGE_ORIENTATION_INCONSISTENT" in str(e):
+                    raise processing_error(
+                        "DICOM orientation inconsistency detected. This may be due to mixed scan protocols or corrupted DICOM files. Try rescanning or using different DICOM files.",
+                        original_error=e,
+                        details={
+                            "job_id": job_id,
+                            "error_type": "DICOM_ORIENTATION_ERROR",
+                            "suggestion": "Check DICOM files for consistent slice orientation or try reorienting the images"
+                        }
+                    )
+                else:
+                    raise processing_error(
+                        f"Segmentation failed: {str(e)}",
+                        original_error=e,
+                        details={"job_id": job_id}
+                    )
             
             # Проверяем результат с валидацией качества
             results = {}
