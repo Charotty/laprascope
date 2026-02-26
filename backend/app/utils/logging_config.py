@@ -78,8 +78,6 @@ def setup_logging(
         console_formatter = ColoredFormatter(log_format)
         console_handler.setFormatter(console_formatter)
         
-        # Добавляем атрибут для определения потока
-        console_handler.stream = 'console'
         logger.addHandler(console_handler)
     
     # Файловый обработчик с ротацией

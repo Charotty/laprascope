@@ -170,7 +170,7 @@ async def startup_event():
         logger.warning(f"Failed to check GPU: {e}")
     
     # Проверяем необходимые директории
-    from config import DATA_DIR, UPLOADS_DIR, OUTPUT_DIR, JOBS_DIR
+    from .config import DATA_DIR, UPLOADS_DIR, OUTPUT_DIR, JOBS_DIR
     
     for dir_name, dir_path in [
         ("data", DATA_DIR),
