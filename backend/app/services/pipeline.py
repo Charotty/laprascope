@@ -13,10 +13,10 @@ from datetime import datetime
 # Добавляем путь к venv для импорта
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / ".venv" / "Lib" / "site-packages"))
 
-from services.segmentation import segment_kidneys, SegmentationError
-from services.conversion import convert_organ_to_stl, ConversionError
-from services.displacement_parser import get_displacement_for_patient, generate_metadata, find_csv_files
-from config import DATA_DIR, JOBS_DIR, ML_CONFIG, BASE_DIR
+from .segmentation import segment_kidneys, SegmentationError
+from .conversion import convert_organ_to_stl, ConversionError
+from .displacement_parser import get_displacement_for_patient, generate_metadata, find_csv_files
+from .config import DATA_DIR, JOBS_DIR, ML_CONFIG, BASE_DIR
 
 logger = logging.getLogger(__name__)
 

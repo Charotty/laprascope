@@ -17,14 +17,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".venv" / "Lib" / "
 # Устанавливаем PYTHONPATH для корректных относительных импортов
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config import API_CONFIG, CORS_ORIGINS
-from api.upload_fixed import router as upload_router
-from api.status import router as status_router
-from api.download import router as download_router
-from api.metadata import router as metadata_router
+from .config import API_CONFIG, CORS_ORIGINS
+from .api.upload_fixed import router as upload_router
+from .api.status import router as status_router
+from .api.download import router as download_router
+from .api.metadata import router as metadata_router
 
-from utils.logging_config import setup_logging, get_logger
-from utils.errors import handle_exception, APIError
+from .utils.logging_config import setup_logging, get_logger
+from .utils.errors import handle_exception, APIError
 
 # Настраиваем улучшенное логирование
 logger = setup_logging(

@@ -10,8 +10,8 @@ import json
 import logging
 from typing import Dict, Any
 
-from app.services.displacement_parser import get_displacement_for_patient, generate_metadata, find_csv_files
-from app.config import JOBS_DIR, BASE_DIR
+from ..services.displacement_parser import get_displacement_for_patient, generate_metadata, find_csv_files
+from ..config import JOBS_DIR, BASE_DIR
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
