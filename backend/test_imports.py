@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 # Добавляем путь к проекту
-project_root = Path(__file__).parent
+project_root = Path(__file__).parent.parent  # Переходим на уровень выше к laprascope/
 sys.path.insert(0, str(project_root))
 
 print("🔍 Тестирование импортов...")
