@@ -13,19 +13,31 @@ logger = logging.getLogger(__name__)
 
 def fix_dicom_orientation_issue(dicom_dir: str, output_dir: str) -> bool:
     """
-    Исправляет DICOM файлы с проблемами ориентации
+    Исправляет DICOM файлы с проблемами ориентации и пропущенными срезами
     """
     try:
         dicom_path = Path(dicom_dir)
         output_path = Path(output_dir)
         output_path.mkdir(exist_ok=True)
         
-        # Получаем все DICOM файлы
+        # Получаем все DICOM файлы с метаданными
         dicom_files = []
         for file_path in dicom_path.glob("*.dcm"):
             try:
                 ds = pydicom.dcmread(str(file_path), stop_before_pixels=True)
-                dicom_files.append((file_path, ds))
+                
+                # Получаем важные метаданные
+                metadata = {
+                    'file_path': file_path,
+                    'slice_location': float(ds.get('SliceLocation', 0)),
+                    'instance_number': int(ds.get('InstanceNumber', 0)),
+                    'series_number': str(ds.get('SeriesNumber', '1')),
+                    'orientation': ds.get('ImageOrientationPatient', None),
+                    'study_instance_uid': str(ds.get('StudyInstanceUID', '')),
+                    'series_instance_uid': str(ds.get('SeriesInstanceUID', ''))
+                }
+                dicom_files.append(metadata)
+                
             except Exception as e:
                 logger.warning(f"Cannot read {file_path}: {e}")
                 continue
@@ -34,51 +46,68 @@ def fix_dicom_orientation_issue(dicom_dir: str, output_dir: str) -> bool:
             logger.warning(f"Too few DICOM files: {len(dicom_files)}")
             return False
             
-        # Группируем по ориентации
-        orientation_groups = {}
+        # Группируем по сериям
+        series_groups = {}
+        for dicom_file in dicom_files:
+            series_uid = dicom_file['series_instance_uid']
+            if series_uid not in series_groups:
+                series_groups[series_uid] = []
+            series_groups[series_uid].append(dicom_file)
         
-        for file_path, ds in dicom_files:
-            try:
-                orientation = ds.get('ImageOrientationPatient', None)
-                if orientation is None:
-                    continue
-                    
-                # Округляем ориентацию для группировки
-                orientation_rounded = tuple(round(float(x), 1) for x in orientation)
-                
-                if orientation_rounded not in orientation_groups:
-                    orientation_groups[orientation_rounded] = []
-                orientation_groups[orientation_rounded].append((file_path, ds))
-                
-            except Exception as e:
-                logger.warning(f"Error processing {file_path}: {e}")
-                continue
+        logger.info(f"Found {len(series_groups)} DICOM series")
         
-        # Находим самую большую группу (основная ориентация)
-        if not orientation_groups:
-            logger.error("No valid orientation groups found")
+        # Находим самую большую и полную серию
+        best_series = None
+        best_score = 0
+        
+        for series_uid, files in series_groups.items():
+            # Сортируем по номеру среза
+            files.sort(key=lambda x: x['instance_number'])
+            
+            # Проверяем последовательность срезов
+            slice_numbers = [f['instance_number'] for f in files]
+            expected_numbers = list(range(min(slice_numbers), max(slice_numbers) + 1))
+            
+            # Вычисляем полноту серии
+            completeness = len(set(slice_numbers) & set(expected_numbers)) / len(expected_numbers)
+            
+            # Вычисляем согласованность ориентации
+            orientations = [f['orientation'] for f in files if f['orientation'] is not None]
+            orientation_consistency = len(set(str(o) for o in orientations)) / len(orientations) if orientations else 0
+            
+            # Общий счет качества
+            score = len(files) * completeness * (1 - orientation_consistency)
+            
+            logger.info(f"Series {series_uid}: {len(files)} files, completeness: {completeness:.2f}, orientation_consistency: {orientation_consistency:.2f}, score: {score:.1f}")
+            
+            if score > best_score:
+                best_score = score
+                best_series = series_uid
+        
+        if best_series is None:
+            logger.error("No valid DICOM series found")
             return False
             
-        main_orientation = max(orientation_groups.keys(), key=lambda k: len(orientation_groups[k]))
-        main_files = orientation_groups[main_orientation]
+        best_files = series_groups[best_series]
+        logger.info(f"Selected best series: {best_series} with {len(best_files)} files")
         
-        logger.info(f"Found {len(orientation_groups)} orientation groups")
-        logger.info(f"Main orientation: {main_orientation} with {len(main_files)} files")
+        # Проверяем минимальное количество срезов
+        if len(best_files) < 20:
+            logger.warning(f"Best series has too few slices: {len(best_files)}")
+            # Все равно пробуем, но с предупреждением
         
-        # Копируем файлы основной ориентации
+        # Копируем файлы лучшей серии
         copied_files = 0
-        for file_path, ds in main_files:
+        for dicom_file in best_files:
             try:
-                # Дополнительная проверка на согласованность
-                slice_location = ds.get('SliceLocation', None)
-                if slice_location is not None:
-                    shutil.copy2(file_path, output_path / file_path.name)
-                    copied_files += 1
+                file_path = dicom_file['file_path']
+                shutil.copy2(file_path, output_path / file_path.name)
+                copied_files += 1
             except Exception as e:
                 logger.warning(f"Error copying {file_path}: {e}")
                 continue
         
-        logger.info(f"Copied {copied_files} DICOM files with consistent orientation")
+        logger.info(f"Copied {copied_files} DICOM files from best series")
         return copied_files >= 10  # Нужно минимум 10 срезов
         
     except Exception as e:

@@ -135,6 +135,7 @@ def run_pipeline(job_id: str, input_path: str) -> Dict:
         
         # Предобработка DICOM для исправления проблем с ориентацией
         preprocessed_dicom_dir = Path(job_dir) / "dicom_preprocessed"
+        fallback_nifti_dir = Path(job_dir) / "nifti_fallback"
         
         try:
             logger.info("Preprocessing DICOM files to fix orientation issues...")
@@ -151,6 +152,43 @@ def run_pipeline(job_id: str, input_path: str) -> Dict:
         
         try:
             segmentation_result = segment_kidneys(job_id, segmentation_input, str(nifti_dir))
+            
+        except Exception as e:
+            # Если основная сегментация не сработала, пробуем альтернативные методы
+            if "MISSING_DICOM_FILES" in str(e) or "NON_CUBICAL_IMAGE" in str(e):
+                logger.warning(f"Primary segmentation failed: {e}")
+                logger.info("Trying alternative DICOM conversion methods...")
+                
+                try:
+                    from ..dicom_converter import convert_dicom_with_dcm2niix, create_fallback_nifti
+                    
+                    # Пробуем dcm2niix
+                    if convert_dicom_with_dcm2niix(segmentation_input, str(fallback_nifti_dir)):
+                        # Ищем созданный NIfTI файл
+                        nifti_files = list(fallback_nifti_dir.glob("*.nii.gz"))
+                        if nifti_files:
+                            fallback_input = str(nifti_files[0])
+                            logger.info(f"Using dcm2niix converted NIfTI: {fallback_input}")
+                            
+                            segmentation_result = segment_kidneys(job_id, fallback_input, str(nifti_dir))
+                        else:
+                            raise Exception("No NIfTI file created by dcm2niix")
+                    else:
+                        # Пробуем fallback метод
+                        logger.info("Trying fallback NIfTI creation...")
+                        if create_fallback_nifti(segmentation_input, str(fallback_nifti_dir)):
+                            fallback_input = str(fallback_nifti_dir / "fallback.nii.gz")
+                            logger.info(f"Using fallback NIfTI: {fallback_input}")
+                            
+                            segmentation_result = segment_kidneys(job_id, fallback_input, str(nifti_dir))
+                        else:
+                            raise Exception("All fallback methods failed")
+                            
+                except Exception as fallback_error:
+                    logger.error(f"Fallback conversion also failed: {fallback_error}")
+                    raise e  # Возвращаем оригинальную ошибку
+            else:
+                raise e
             
             update_job_status(job_id, JobStatus.SEGMENTATION_DONE, {
                 "segmentation": segmentation_result.get("results", {}),
