@@ -96,7 +96,7 @@ async def get_metadata(job_id: str = Path(min_length=1, max_length=100, title="J
 
 @router.post("/metadata/{job_id}/link-patient")
 async def link_patient_to_job(
-    job_id: str = Path(..., min_length=1, max_length=100),
+    job_id: str = Path(min_length=1, max_length=100, title="Job ID"),
     patient_fio: str = None
 ):
     """
