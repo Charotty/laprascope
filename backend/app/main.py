@@ -14,10 +14,13 @@ import uvicorn
 # Добавляем путь к venv для импорта
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".venv" / "Lib" / "site-packages"))
 
-from .config import API_CONFIG
-from .api.upload import router as upload_router
-from .api.status import router as status_router
-from .api.download import router as download_router
+# Устанавливаем PYTHONPATH для корректных относительных импортов
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from config import API_CONFIG
+from api.upload import router as upload_router
+from api.status import router as status_router
+from api.download import router as download_router
 
 # Настройка логирования
 logging.basicConfig(

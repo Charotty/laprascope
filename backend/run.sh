@@ -11,14 +11,14 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 # Проверяем виртуальное окружение
-if [ ! -d "venv" ]; then
+if [ ! -d ".venv" ]; then
     echo "📦 Creating virtual environment..."
-    python3 -m venv venv
+    python3 -m venv .venv
 fi
 
 # Активируем виртуальное окружение
 echo "🔧 Activating virtual environment..."
-source venv/bin/activate 2>/dev/null || source venv/Scripts/activate 2>/dev/null
+source .venv/bin/activate 2>/dev/null || source .venv/Scripts/activate 2>/dev/null
 
 # Устанавливаем зависимости
 echo "📦 Installing dependencies..."
@@ -31,4 +31,5 @@ mkdir -p data/uploads data/output data/jobs logs
 # Запускаем приложение
 echo "🌐 Starting FastAPI application..."
 cd app
+export PYTHONPATH=..
 python main.py
