@@ -3,26 +3,26 @@
 """
 import os
 import sys
-import subprocess
 import logging
+import traceback
 from pathlib import Path
-from typing import Dict, Optional
-import json
+from typing import Dict, Any, Optional
 
-# Добавляем путь к venv для импорта
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / ".venv" / "Lib" / "site-packages"))
+# Импортируем патч для обхода проблем с DICOM валидацией
+from ..dicom_patch import patch_dicom2nifti
+
+# Применяем патч до импорта totalsegmentator
+patch_dicom2nifti()
+
+import nibabel as nib
+import numpy as np
+from totalsegmentator.python_api import totalsegmentator
+import subprocess
+from scipy.ndimage import zoom
 
 # Импортируем наши модули
 from ..utils.logging_config import get_logger, measure_time
 from ..utils.errors import processing_error, memory_error, handle_exception
-
-try:
-    from totalsegmentator.python_api import totalsegmentator
-    import nibabel as nib
-    import numpy as np
-    from scipy.ndimage import zoom
-except ImportError as e:
-    logging.warning(f"Some ML packages not available: {e}")
 
 logger = get_logger(__name__)
 
