@@ -5,6 +5,7 @@ import os
 import sys
 import json
 import logging
+import shutil
 from pathlib import Path
 from typing import Dict, Optional
 from datetime import datetime
@@ -172,8 +173,32 @@ def run_pipeline(job_id: str, input_path: str) -> Dict:
             })
             raise PipelineError(f"Conversion failed: {e}")
         
-        # Шаг 4: Завершение
-        logger.info("Step 4: Pipeline completed!")
+        # Шаг 4: Очистка исходных файлов
+        logger.info("Step 4: Cleaning up input files...")
+        try:
+            # Удаляем DICOM директорию, если она есть
+            if dicom_dir.exists():
+                shutil.rmtree(dicom_dir)
+                logger.info(f"✅ Removed DICOM directory: {dicom_dir}")
+            
+            # Для NIfTI загрузок удаляем только исходный файл, но оставляем результаты сегментации
+            # (kidney_left.nii.gz и kidney_right.nii.gz)
+            # Исходный NIfTI файл обычно имеет имя, отличное от kidney_*.nii.gz
+            if nifti_dir.exists():
+                input_nifti_files = [
+                    f for f in nifti_dir.iterdir() 
+                    if f.is_file() and not f.name.startswith('kidney_')
+                ]
+                for orig_file in input_nifti_files:
+                    orig_file.unlink()
+                    logger.info(f"✅ Removed original NIfTI file: {orig_file}")
+                    
+        except Exception as cleanup_err:
+            logger.warning(f"⚠️ Failed to clean up input files: {cleanup_err}")
+            # Не прерываем pipeline из-за ошибки очистки
+        
+        # Шаг 5: Завершение
+        logger.info("Step 5: Pipeline completed!")
         
         final_result = {
             "job_id": job_id,
@@ -184,7 +209,8 @@ def run_pipeline(job_id: str, input_path: str) -> Dict:
             "files": {
                 "nifti_dir": str(nifti_dir),
                 "stl_dir": str(stl_dir)
-            }
+            },
+            "cleanup_completed": True
         }
         
         update_job_status(job_id, JobStatus.COMPLETED, final_result)
