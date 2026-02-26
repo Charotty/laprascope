@@ -8,6 +8,12 @@ import traceback
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+# Импортируем патчи для совместимости с PyTorch 2.6
+from ..pytorch_patch import apply_all_patches
+
+# Применяем патчи до импорта totalsegmentator
+apply_all_patches()
+
 # Импортируем патч для обхода проблем с DICOM валидацией
 from ..dicom_patch import patch_dicom2nifti
 
