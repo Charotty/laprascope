@@ -14,8 +14,8 @@ from fastapi.responses import JSONResponse
 # Добавляем путь к venv для импорта
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / ".venv" / "Lib" / "site-packages"))
 
-from ..services.pipeline import get_job_status, list_jobs
-from ..config import JOBS_DIR
+from services.pipeline import get_job_status, list_jobs
+from config import JOBS_DIR
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
