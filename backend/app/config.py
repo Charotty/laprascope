@@ -54,8 +54,8 @@ else:
 SUPPORTED_INPUT_FORMATS = [".nii", ".nii.gz", ".dcm"]
 SUPPORTED_OUTPUT_FORMATS = [".nii.gz", ".stl"]
 
-# Максимальный размер файла для загрузки (100MB)
-MAX_UPLOAD_SIZE = 100 * 1024 * 1024
+# Максимальный размер файла для загрузки (2GB для больших DICOM архивов)
+MAX_UPLOAD_SIZE = 2 * 1024 * 1024 * 1024  # 2GB
 
 # Время ожидания обработки (в секундах)
 PROCESSING_TIMEOUT = 300  # 5 минут
