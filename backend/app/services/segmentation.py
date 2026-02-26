@@ -186,8 +186,7 @@ def segment_kidneys(job_id: str, input_path: str, output_dir: str, use_downsampl
                     nr_thr_saving=1,
                     roi_subset=["kidney_left", "kidney_right"],
                     fast=True,
-                    device="cpu",
-                    reorient_nifti=False  # Отключаем переориентацию для проблемных DICOM
+                    device="cpu"
                 )
                 
                 logger.info("Segmentation completed successfully!")
