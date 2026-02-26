@@ -1,0 +1,10 @@
+[Unit]
+Description=Run AR Laparoscopy cleanup every 6 hours
+Requires=laprascope-cleanup.service
+
+[Timer]
+OnCalendar=*:0/6:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -15,7 +15,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / ".venv" / "L
 
 from services.segmentation import segment_kidneys, SegmentationError
 from services.conversion import convert_organ_to_stl, ConversionError
-from config import DATA_DIR, JOBS_DIR, ML_CONFIG
+from services.displacement_parser import get_displacement_for_patient, generate_metadata, find_csv_files
+from config import DATA_DIR, JOBS_DIR, ML_CONFIG, BASE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +103,11 @@ def run_pipeline(job_id: str, input_path: str) -> Dict:
         # Создаем структуру директорий для задачи
         job_dir = JOBS_DIR / job_id
         dicom_dir = job_dir / "dicom"
+        dicom_organized_dir = job_dir / "dicom_organized"
         nifti_dir = job_dir / "nifti"
         stl_dir = job_dir / "stl"
         
-        for dir_path in [job_dir, dicom_dir, nifti_dir, stl_dir]:
+        for dir_path in [job_dir, dicom_dir, dicom_organized_dir, nifti_dir, stl_dir]:
             dir_path.mkdir(exist_ok=True)
         
         # Шаг 1: Обновить статус → processing
@@ -116,8 +118,23 @@ def run_pipeline(job_id: str, input_path: str) -> Dict:
         
         # Шаг 2: Сегментация
         logger.info("Step 2: Running segmentation...")
+        
+        # Определяем правильный путь к DICOM файлам
+        if dicom_organized_dir.exists() and any(dicom_organized_dir.iterdir()):
+            # Используем организованные DICOM файлы
+            segmentation_input = str(dicom_organized_dir)
+            logger.info(f"Using organized DICOM files from: {segmentation_input}")
+        elif Path(input_path).is_dir():
+            # Используем переданный путь (для NIfTI или старых DICOM)
+            segmentation_input = input_path
+            logger.info(f"Using input path: {segmentation_input}")
+        else:
+            # Пробуем оригинальную dicom директорию
+            segmentation_input = str(dicom_dir)
+            logger.info(f"Using original DICOM directory: {segmentation_input}")
+        
         try:
-            segmentation_result = segment_kidneys(job_id, input_path, str(nifti_dir))
+            segmentation_result = segment_kidneys(job_id, segmentation_input, str(nifti_dir))
             
             update_job_status(job_id, JobStatus.SEGMENTATION_DONE, {
                 "segmentation": segmentation_result.get("results", {}),
@@ -176,10 +193,11 @@ def run_pipeline(job_id: str, input_path: str) -> Dict:
         # Шаг 4: Очистка исходных файлов
         logger.info("Step 4: Cleaning up input files...")
         try:
-            # Удаляем DICOM директорию, если она есть
-            if dicom_dir.exists():
-                shutil.rmtree(dicom_dir)
-                logger.info(f"✅ Removed DICOM directory: {dicom_dir}")
+            # Удаляем DICOM директории, если они есть
+            for dicom_path in [dicom_dir, dicom_organized_dir]:
+                if dicom_path.exists():
+                    shutil.rmtree(dicom_path)
+                    logger.info(f"✅ Removed DICOM directory: {dicom_path}")
             
             # Для NIfTI загрузок удаляем только исходный файл, но оставляем результаты сегментации
             # (kidney_left.nii.gz и kidney_right.nii.gz)
@@ -197,8 +215,13 @@ def run_pipeline(job_id: str, input_path: str) -> Dict:
             logger.warning(f"⚠️ Failed to clean up input files: {cleanup_err}")
             # Не прерываем pipeline из-за ошибки очистки
         
-        # Шаг 5: Завершение
-        logger.info("Step 5: Pipeline completed!")
+        # Шаг 5: Генерация метаданных со смещением
+        logger.info("Step 5: Generating metadata with displacement data...")
+        
+        metadata_result = generate_job_metadata(job_id)
+        
+        # Шаг 6: Завершение
+        logger.info("Step 6: Pipeline completed!")
         
         final_result = {
             "job_id": job_id,
@@ -206,6 +229,7 @@ def run_pipeline(job_id: str, input_path: str) -> Dict:
             "completed_at": datetime.now().isoformat(),
             "segmentation": segmentation_result.get("results", {}),
             "conversion": conversion_results,
+            "metadata": metadata_result,
             "files": {
                 "nifti_dir": str(nifti_dir),
                 "stl_dir": str(stl_dir)
@@ -231,6 +255,63 @@ def run_pipeline(job_id: str, input_path: str) -> Dict:
         })
         
         raise PipelineError(error_msg)
+
+def generate_job_metadata(job_id: str) -> Dict:
+    """
+    Generate metadata.json for a job including displacement data.
+    
+    Args:
+        job_id: Job identifier
+        
+    Returns:
+        Dict with metadata generation result
+    """
+    job_dir = JOBS_DIR / job_id
+    
+    try:
+        # Check if we have patient info in job status
+        status_file = job_dir / "status.json"
+        patient_fio = None
+        
+        if status_file.exists():
+            with open(status_file, 'r') as f:
+                status = json.load(f)
+                patient_fio = status.get("patient_fio")
+        
+        # Try to get displacement data
+        displacement_data = None
+        if patient_fio:
+            csv_files = find_csv_files(BASE_DIR)
+            for csv_file in csv_files:
+                displacement_data = get_displacement_for_patient(csv_file, patient_fio)
+                if displacement_data:
+                    logger.info(f"Found displacement data for {patient_fio} in {csv_file}")
+                    break
+        
+        # Generate metadata
+        metadata = generate_metadata(displacement_data, job_id)
+        
+        # Save metadata file
+        metadata_file = job_dir / "metadata.json"
+        with open(metadata_file, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"✅ Generated metadata for job {job_id}")
+        
+        return {
+            "status": "success",
+            "metadata_file": str(metadata_file),
+            "has_displacement": displacement_data is not None,
+            "patient_fio": patient_fio
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to generate metadata for job {job_id}: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "has_displacement": False
+        }
 
 def create_job(input_path: str) -> str:
     """

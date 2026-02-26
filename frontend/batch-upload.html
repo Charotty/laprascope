@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DICOM Batch Upload - AR Laparoscopy</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .upload-zone { border: 2px dashed #ccc; border-radius: 8px; padding: 40px; text-align: center; margin: 20px 0; transition: all 0.3s; }
+        .upload-zone.dragover { border-color: #007bff; background: #e3f2fd; }
+        .file-list { margin: 20px 0; }
+        .file-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border: 1px solid #ddd; margin: 5px 0; border-radius: 4px; }
+        .progress { width: 100%; height: 20px; background: #f0f0f0; border-radius: 10px; overflow: hidden; margin: 10px 0; }
+        .progress-bar { height: 100%; background: linear-gradient(90deg, #28a745, #20c997); transition: width 0.3s; }
+        .btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; margin: 5px; }
+        .btn:hover { background: #0056b3; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        .status { padding: 10px; border-radius: 4px; margin: 10px 0; }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .status.info { background: #d1ecf1; color: #0c5460; }
+        .job-item { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 4px; }
+        .job-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .download-links { margin-top: 10px; }
+        .download-links a { display: inline-block; margin: 5px 10px 5px 0; padding: 5px 10px; background: #28a745; color: white; text-decoration: none; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏥 DICOM Batch Upload - AR Laparoscopy</h1>
+        <p>Загрузите DICOM файлы для сегментации почек и генерации STL моделей</p>
+        
+        <!-- Зона загрузки -->
+        <div class="upload-zone" id="uploadZone">
+            <div>
+                <h3>📁 Перетащите ZIP файлы сюда</h3>
+                <p>или нажмите для выбора файлов</p>
+                <input type="file" id="fileInput" multiple accept=".zip" style="display: none;">
+                <button class="btn" onclick="document.getElementById('fileInput').click()">Выбрать файлы</button>
+            </div>
+        </div>
+
+        <!-- Дополнительные опции -->
+        <div style="margin: 20px 0;">
+            <h3>📝 Параметры загрузки</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div>
+                    <label for="patientFio">ФИО пациента (опционально):</label>
+                    <input type="text" id="patientFio" placeholder="Иванов Иван Иванович" style="width: 100%; padding: 8px; margin: 5px 0;">
+                </div>
+                <div>
+                    <label for="priority">Приоритет обработки:</label>
+                    <select id="priority" style="width: 100%; padding: 8px; margin: 5px 0;">
+                        <option value="normal">Обычный</option>
+                        <option value="high">Высокий</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Кнопка загрузки -->
+        <div style="text-align: center; margin: 20px 0;">
+            <button class="btn" id="uploadBtn" onclick="startUpload()" disabled>🚀 Начать загрузку</button>
+            <button class="btn" id="clearBtn" onclick="clearJobs()" style="background: #dc3545;">🗑️ Очистить список</button>
+        </div>
+
+        <!-- Прогресс -->
+        <div id="progressContainer" style="display: none;">
+            <h3>📊 Прогресс загрузки</h3>
+            <div class="progress">
+                <div class="progress-bar" id="progressBar" style="width: 0%;"></div>
+            </div>
+            <p id="progressText">0%</p>
+        </div>
+
+        <!-- Список задач -->
+        <div>
+            <h3>📋 Активные задачи</h3>
+            <div id="jobsList"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/api/v1';
+        let uploadedFiles = [];
+        let activeJobs = [];
+
+        // Инициализация
+        document.addEventListener('DOMContentLoaded', function() {
+            setupDragAndDrop();
+            loadJobs();
+        });
+
+        // Drag and Drop
+        function setupDragAndDrop() {
+            const zone = document.getElementById('uploadZone');
+            
+            zone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                zone.classList.add('dragover');
+            });
+            
+            zone.addEventListener('dragleave', () => {
+                zone.classList.remove('dragover');
+            });
+            
+            zone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                zone.classList.remove('dragover');
+                handleFiles(e.dataTransfer.files);
+            });
+        }
+
+        // Обработка файлов
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            handleFiles(e.target.files);
+        });
+
+        function handleFiles(files) {
+            uploadedFiles = Array.from(files).filter(file => file.name.endsWith('.zip'));
+            document.getElementById('uploadBtn').disabled = uploadedFiles.length === 0;
+            
+            if (uploadedFiles.length > 0) {
+                showStatus(`Выбрано файлов: ${uploadedFiles.length}`, 'info');
+            }
+        }
+
+        // Загрузка файлов
+        async function startUpload() {
+            if (uploadedFiles.length === 0) return;
+            
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('uploadBtn').disabled = true;
+            
+            for (let i = 0; i < uploadedFiles.length; i++) {
+                await uploadFile(uploadedFiles[i], i);
+            }
+            
+            document.getElementById('uploadBtn').disabled = false;
+            document.getElementById('fileInput').value = '';
+            uploadedFiles = [];
+        }
+
+        async function uploadFile(file, index) {
+            const patientFio = document.getElementById('patientFio').value;
+            const priority = document.getElementById('priority').value;
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            if (patientFio) {
+                formData.append('patient_fio', patientFio);
+            }
+            
+            try {
+                showProgress(0, `Загрузка ${file.name}...`);
+                
+                const response = await fetch(`${API_BASE}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const result = await response.json();
+                showProgress(100, `✅ ${file.name} загружен. Job ID: ${result.job_id}`);
+                
+                // Добавляем задачу в список
+                addJob({
+                    job_id: result.job_id,
+                    filename: file.name,
+                    patient_fio: patientFio,
+                    priority: priority,
+                    status: 'queued',
+                    created_at: new Date().toISOString()
+                });
+                
+                // Начинаем отслеживание прогресса
+                trackJobProgress(result.job_id);
+                
+            } catch (error) {
+                showProgress(0, `❌ Ошибка загрузки ${file.name}: ${error.message}`);
+                console.error('Upload error:', error);
+            }
+        }
+
+        // Отслеживание прогресса задачи
+        async function trackJobProgress(jobId) {
+            const updateInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`${API_BASE}/status/${jobId}`);
+                    
+                    if (!response.ok) {
+                        throw new Error(`Failed to check status: ${response.statusText}`);
+                    }
+                    
+                    const status = await response.json();
+                    updateJobStatus(jobId, status);
+                    
+                    // Если задача завершена или ошибка, прекращаем отслеживание
+                    if (status.status === 'completed' || status.status === 'error') {
+                        clearInterval(updateInterval);
+                    }
+                    
+                } catch (error) {
+                    console.error('Status check error:', error);
+                    clearInterval(updateInterval);
+                }
+            }, 2000); // Проверяем каждые 2 секунды
+        }
+
+        // Управление задачами
+        function addJob(job) {
+            activeJobs.push(job);
+            renderJobs();
+            saveJobs();
+        }
+
+        function updateJobStatus(jobId, status) {
+            const job = activeJobs.find(j => j.job_id === jobId);
+            if (job) {
+                Object.assign(job, status);
+                renderJobs();
+                saveJobs();
+            }
+        }
+
+        function renderJobs() {
+            const container = document.getElementById('jobsList');
+            
+            if (activeJobs.length === 0) {
+                container.innerHTML = '<p>Нет активных задач</p>';
+                return;
+            }
+            
+            container.innerHTML = activeJobs.map(job => `
+                <div class="job-item">
+                    <div class="job-header">
+                        <strong>${job.patient_fio || 'Анонимный пациент'}</strong>
+                        <span class="status ${job.status}">${getStatusText(job.status)}</span>
+                    </div>
+                    <div>
+                        <small>📁 ${job.filename} | 🆔 ${job.job_id} | 🕒 ${new Date(job.created_at).toLocaleString()}</small>
+                    </div>
+                    ${job.status === 'completed' ? `
+                        <div class="download-links">
+                            <a href="${API_BASE}/stl/${job.job_id}/kidney_left" download>⬇️ Левая почка STL</a>
+                            <a href="${API_BASE}/stl/${job.job_id}/kidney_right" download>⬇️ Правая почка STL</a>
+                            <a href="${API_BASE}/download/${job.job_id}/all" download>⬇️ Все файлы (ZIP)</a>
+                        </div>
+                    ` : ''}
+                    ${job.progress ? `
+                        <div class="progress">
+                            <div class="progress-bar" style="width: ${job.progress}%;"></div>
+                        </div>
+                        <p>${job.message || 'Обработка...'}</p>
+                    ` : ''}
+                </div>
+            `).join('');
+        }
+
+        function getStatusText(status) {
+            const statusMap = {
+                'queued': '⏳ В очереди',
+                'processing': '🔄 Обработка',
+                'segmentation_done': '🧠 Сегментация завершена',
+                'conversion_done': '🔧 Конвертация завершена',
+                'completed': '✅ Завершено',
+                'error': '❌ Ошибка'
+            };
+            return statusMap[status] || status;
+        }
+
+        // UI функции
+        function showProgress(percent, text) {
+            document.getElementById('progressBar').style.width = percent + '%';
+            document.getElementById('progressText').textContent = text;
+        }
+
+        function showStatus(message, type) {
+            const statusDiv = document.createElement('div');
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+            document.querySelector('.container').insertBefore(statusDiv, document.querySelector('.upload-zone'));
+            
+            setTimeout(() => statusDiv.remove(), 5000);
+        }
+
+        function clearJobs() {
+            if (confirm('Удалить все завершенные задачи из списка?')) {
+                activeJobs = activeJobs.filter(job => job.status !== 'completed');
+                renderJobs();
+                saveJobs();
+            }
+        }
+
+        // LocalStorage
+        function saveJobs() {
+            localStorage.setItem('dicomJobs', JSON.stringify(activeJobs));
+        }
+
+        function loadJobs() {
+            const saved = localStorage.getItem('dicomJobs');
+            if (saved) {
+                activeJobs = JSON.parse(saved);
+                // Перезапускаем отслеживание для активных задач
+                activeJobs.filter(job => job.status !== 'completed' && job.status !== 'error')
+                    .forEach(job => trackJobProgress(job.job_id));
+                renderJobs();
+            }
+        }
+    </script>
+</body>
+</html>

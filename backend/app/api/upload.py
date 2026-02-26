@@ -25,7 +25,8 @@ router = APIRouter()
 @router.post("/upload")
 async def upload_file(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    patient_fio: str = None
 ) -> Dict:
     """
     Загружает ZIP архив с DICOM файлами и запускает обработку
@@ -33,6 +34,7 @@ async def upload_file(
     Args:
         background_tasks: FastAPI background tasks
         file: загруженный файл (ZIP с DICOM)
+        patient_fio: ФИО пациента для связи с CSV данными смещения
         
     Returns:
         Dict: информация о созданной задаче
@@ -107,6 +109,11 @@ async def upload_file(
             "upload_filename": file.filename,
             "files_count": len(dicom_files)
         }
+        
+        # Add patient_fio if provided
+        if patient_fio and patient_fio.strip():
+            status_data["patient_fio"] = patient_fio.strip()
+            logger.info(f"Linked patient '{patient_fio}' to job {job_id}")
         
         status_file = job_dir / "status.json"
         import json

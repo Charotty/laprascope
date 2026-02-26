@@ -588,15 +588,15 @@ async def root():
         "version": "1.0.0",
         "status": "running",
         "endpoints": {
-            "upload": "POST /upload - Upload DICOM zip file",
-            "status": "GET /status/{job_id} - Check job processing status",
-            "download": "GET /stl/{job_id}/{organ} - Download STL file",
-            "health": "GET /health - Health check"
+            "upload": "POST /api/v1/upload - Upload DICOM zip file",
+            "status": "GET /api/v1/status/{job_id} - Check job processing status",
+            "download": "GET /api/v1/stl/{job_id}/{organ} - Download STL file",
+            "health": "GET /api/v1/health - Health check"
         }
     }
 
 
-@app.post("/upload")
+@app.post("/api/v1/upload")
 async def upload_dicom(
     file: UploadFile = File(...),
     background_tasks: BackgroundTasks = None
@@ -681,7 +681,7 @@ async def upload_dicom(
         )
 
 
-@app.get("/status/{job_id}")
+@app.get("/api/v1/status/{job_id}")
 async def get_status(job_id: str):
     """
     Get job processing status
@@ -713,7 +713,7 @@ async def get_status(job_id: str):
         )
 
 
-@app.get("/stl/{job_id}/{organ}")
+@app.get("/api/v1/stl/{job_id}/{organ}")
 async def download_stl(job_id: str, organ: str):
     """
     Download STL file for specific organ
@@ -835,15 +835,15 @@ curl http://localhost:8000/health
 # Ожидается: {"status": "healthy", "cuda_available": true, ...}
 
 # Тест 3: Upload (если есть тестовый zip)
-curl -X POST -F "file=@test_dicom.zip" http://localhost:8000/upload
+curl -X POST -F "file=@test_dicom.zip" http://localhost:8000/api/v1/upload
 
 # Ожидается: {"job_id": "abc123...", "status": "queued", ...}
 
 # Тест 4: Status (замени JOB_ID на полученный)
-curl http://localhost:8000/status/JOB_ID
+curl http://localhost:8000/api/v1/status/JOB_ID
 
 # Тест 5: Download (когда обработка завершится)
-curl -O http://localhost:8000/stl/JOB_ID/kidney_left
+curl -O http://localhost:8000/api/v1/stl/JOB_ID/kidney_left
 ```
 
 ### Критерии выполнения:
@@ -1252,7 +1252,7 @@ nano frontend/simple/index.html
                 progressFill.textContent = '20%';
                 statusText.textContent = 'Uploading file...';
                 
-                const uploadResponse = await fetch(`${API_URL}/upload`, {
+                const uploadResponse = await fetch(`${API_URL}/api/v1/upload`, {
                     method: 'POST',
                     body: formData
                 });
@@ -1282,7 +1282,7 @@ nano frontend/simple/index.html
         async function pollStatus() {
             const pollInterval = setInterval(async () => {
                 try {
-                    const response = await fetch(`${API_URL}/status/${currentJobId}`);
+                    const response = await fetch(`${API_URL}/api/v1/status/${currentJobId}`);
                     
                     if (!response.ok) {
                         throw new Error('Status check failed');
@@ -1318,9 +1318,9 @@ nano frontend/simple/index.html
             results.style.display = 'block';
             
             document.getElementById('downloadLeft').href = 
-                `${API_URL}/stl/${currentJobId}/kidney_left`;
+                `${API_URL}/api/v1/stl/${currentJobId}/kidney_left`;
             document.getElementById('downloadRight').href = 
-                `${API_URL}/stl/${currentJobId}/kidney_right`;
+                `${API_URL}/api/v1/stl/${currentJobId}/kidney_right`;
             
             uploadBtn.disabled = false;
             uploadBtn.textContent = 'Upload Another File';
@@ -1501,7 +1501,7 @@ public class NetworkManager : MonoBehaviour
         WWWForm form = new WWWForm();
         form.AddBinaryData("file", zipData, "dicom.zip", "application/zip");
         
-        using (UnityWebRequest request = UnityWebRequest.Post($"{API_URL}/upload", form))
+        using (UnityWebRequest request = UnityWebRequest.Post($"{API_URL}/api/v1/upload", form))
         {
             yield return request.SendWebRequest();
             
@@ -1523,7 +1523,7 @@ public class NetworkManager : MonoBehaviour
     {
         while (true)
         {
-            using (UnityWebRequest request = UnityWebRequest.Get($"{API_URL}/status/{jobId}"))
+            using (UnityWebRequest request = UnityWebRequest.Get($"{API_URL}/api/v1/status/{jobId}"))
             {
                 yield return request.SendWebRequest();
                 
@@ -1561,7 +1561,7 @@ public class NetworkManager : MonoBehaviour
     
     public IEnumerator DownloadSTL(string jobId, string organ, Action<byte[]> onSuccess, Action<string> onError)
     {
-        using (UnityWebRequest request = UnityWebRequest.Get($"{API_URL}/stl/{jobId}/{organ}"))
+        using (UnityWebRequest request = UnityWebRequest.Get($"{API_URL}/api/v1/stl/{jobId}/{organ}"))
         {
             yield return request.SendWebRequest();
             
@@ -1943,9 +1943,9 @@ python3 -m http.server 8080
 ```
 
 ### Endpoints
-- `POST /upload` - Upload DICOM zip
-- `GET /status/{job_id}` - Check status
-- `GET /stl/{job_id}/{organ}` - Download STL
+- `POST /api/v1/upload` - Upload DICOM zip
+- `GET /api/v1/status/{job_id}` - Check status
+- `GET /api/v1/stl/{job_id}/{organ}` - Download STL
 
 ## Tech Stack
 - Python 3.10+

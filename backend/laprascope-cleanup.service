@@ -1,0 +1,16 @@
+[Unit]
+Description=AR Laparoscopy Jobs Cleanup Service
+After=network.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/laprascope/backend
+Environment=PATH=/home/ubuntu/laprascope/backend/.venv/bin
+ExecStart=/home/ubuntu/laprascope/backend/.venv/bin/python cleanup_jobs.py --ttl 24
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

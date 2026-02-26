@@ -17,25 +17,22 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / ".venv" / "Lib" / "
 # Устанавливаем PYTHONPATH для корректных относительных импортов
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config import API_CONFIG
-from api.upload import router as upload_router
+from config import API_CONFIG, CORS_ORIGINS
+from api.upload_fixed import router as upload_router
 from api.status import router as status_router
 from api.download import router as download_router
+from api.metadata import router as metadata_router
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('logs/app.log'),
-        logging.StreamHandler()
-    ]
+from utils.logging_config import setup_logging, get_logger
+from utils.errors import handle_exception, APIError
+
+# Настраиваем улучшенное логирование
+logger = setup_logging(
+    log_level=API_CONFIG.get("log_level", "INFO"),
+    log_dir="logs",
+    enable_console=True,
+    enable_file=True
 )
-
-# Создаем директорию для логов
-os.makedirs('logs', exist_ok=True)
-
-logger = logging.getLogger(__name__)
 
 # Создаем FastAPI приложение
 app = FastAPI(
@@ -49,7 +46,7 @@ app = FastAPI(
 # Добавляем CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # В продакшене ограничить конкретные домены
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -59,84 +56,58 @@ app.add_middleware(
 app.include_router(upload_router, prefix="/api/v1", tags=["upload"])
 app.include_router(status_router, prefix="/api/v1", tags=["status"])
 app.include_router(download_router, prefix="/api/v1", tags=["download"])
+app.include_router(metadata_router, prefix="/api/v1", tags=["metadata"])
 
-# Exception handlers
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
-    """Обработчик HTTP исключений"""
-    logger.error(f"HTTP {exc.status_code}: {exc.detail}")
+# Exception handlers с унифицированной обработкой
+@app.exception_handler(APIError)
+async def api_error_handler(request: Request, exc: APIError):
+    """Обработчик стандартизированных API ошибок"""
+    exc.log(logger, f"API Error in {request.url.path}")
+    
+    # Определяем HTTP статус на основе типа ошибки
+    status_codes = {
+        "validation_error": 400,
+        "authentication_error": 401,
+        "authorization_error": 403,
+        "rate_limit_error": 429,
+        "timeout_error": 408,
+        "network_error": 503,
+        "processing_error": 500,
+        "file_system_error": 500,
+        "memory_error": 503,
+        "unknown_error": 500
+    }
+    
+    status_code = status_codes.get(exc.error_type.value, 500)
+    
     return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "error": {
-                "code": exc.status_code,
-                "message": exc.detail,
-                "type": "http_error"
-            }
-        }
+        status_code=status_code,
+        content=exc.to_dict()
     )
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     """Обработчик общих исключений"""
-    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": {
-                "code": 500,
-                "message": "Internal server error",
-                "type": "internal_error",
-                "details": str(exc) if API_CONFIG.get("debug") else None
-            }
-        }
+    api_error = handle_exception(
+        logger=logger,
+        exception=exc,
+        context=f"Request: {request.method} {request.url.path}",
+        default_message="Internal server error"
     )
-
-@app.exception_handler(MemoryError)
-async def memory_error_handler(request: Request, exc: MemoryError):
-    """Обработчик ошибок памяти (CUDA OOM)"""
-    logger.error(f"Memory error: {str(exc)}")
-    return JSONResponse(
-        status_code=503,
-        content={
-            "error": {
-                "code": 503,
-                "message": "Service unavailable due to memory constraints. Please try with a smaller file or try again later.",
-                "type": "memory_error"
-            }
-        }
-    )
-
-@app.exception_handler(OSError)
-async def os_error_handler(request: Request, exc: OSError):
-    """Обработчик ошибок ОС (включая проблемы с DICOM файлами)"""
-    logger.error(f"OS error: {str(exc)}")
     
-    # Определяем тип ошибки
-    if "No such file" in str(exc) or "not found" in str(exc):
-        error_type = "file_not_found"
-        message = "File not found or corrupted"
-    elif "Permission denied" in str(exc):
-        error_type = "permission_error"
-        message = "Permission denied"
-    elif "Invalid DICOM" in str(exc) or "corrupted" in str(exc):
-        error_type = "invalid_dicom"
-        message = "Invalid or corrupted DICOM file"
+    # Определяем статус на основе типа ошибки
+    if isinstance(exc, (FileNotFoundError, PermissionError)):
+        status_code = 404
+    elif isinstance(exc, ValueError):
+        status_code = 400
     else:
-        error_type = "os_error"
-        message = "System error occurred"
+        status_code = 500
     
     return JSONResponse(
-        status_code=400,
-        content={
-            "error": {
-                "code": 400,
-                "message": message,
-                "type": error_type,
-                "details": str(exc) if API_CONFIG.get("debug") else None
-            }
-        }
+        status_code=status_code,
+        content=api_error.to_dict()
     )
+
 
 # Root endpoint
 @app.get("/")
@@ -156,6 +127,8 @@ async def root():
             "download_nifti": "/api/v1/nifti/{job_id}/{organ}",
             "download_all": "/api/v1/download/{job_id}/all",
             "files": "/api/v1/files/{job_id}",
+            "metadata": "/api/v1/metadata/{job_id}",
+            "link_patient": "/api/v1/metadata/{job_id}/link-patient",
             "health": "/api/v1/health",
             "stats": "/api/v1/stats"
         },

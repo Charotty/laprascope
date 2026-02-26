@@ -31,6 +31,25 @@ API_CONFIG = {
     "reload": True,
 }
 
+# CORS конфигурация
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+
+if ENVIRONMENT == "production":
+    CORS_ORIGINS = [
+        "https://your-production-domain.com",
+        "https://www.your-production-domain.com"
+    ]
+else:
+    # Для разработки разрешаем локальные адреса
+    CORS_ORIGINS = [
+        "http://localhost:3000",  # React dev server
+        "http://localhost:5173",  # Vite dev server
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://localhost:8080",   # Simple HTML server (legacy)
+        "http://127.0.0.1:8080"
+    ]
+
 # Поддерживаемые форматы файлов
 SUPPORTED_INPUT_FORMATS = [".nii", ".nii.gz", ".dcm"]
 SUPPORTED_OUTPUT_FORMATS = [".nii.gz", ".stl"]

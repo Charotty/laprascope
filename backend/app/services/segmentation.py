@@ -12,6 +12,10 @@ import json
 # Добавляем путь к venv для импорта
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / ".venv" / "Lib" / "site-packages"))
 
+# Импортируем наши модули
+from utils.logging_config import get_logger, measure_time
+from utils.errors import processing_error, memory_error, handle_exception
+
 try:
     from totalsegmentator.python_api import totalsegmentator
     import nibabel as nib
@@ -20,7 +24,7 @@ try:
 except ImportError as e:
     logging.warning(f"Some ML packages not available: {e}")
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class SegmentationError(Exception):
     """Исключения для ошибок сегментации"""
@@ -60,6 +64,64 @@ def downsample_for_segmentation(input_path: str, target_shape: tuple = (128, 128
     
     return temp_input
 
+def validate_segmentation_quality(img_path: str, organ_name: str) -> Dict:
+    """
+    Проверяет качество сегментации
+    
+    Args:
+        img_path: путь к сегментированному файлу
+        organ_name: название органа для логов
+        
+    Returns:
+        Dict: результат валидации
+    """
+    try:
+        img = nib.load(img_path)
+        data = img.get_fdata()
+        
+        # Базовые проверки
+        total_voxels = np.sum(data > 0)
+        file_size_mb = os.path.getsize(img_path) / (1024 * 1024)
+        
+        # Проверки качества
+        quality_issues = []
+        
+        # 1. Проверка на пустую маску
+        if total_voxels == 0:
+            quality_issues.append("Empty segmentation mask")
+        
+        # 2. Проверка на слишком маленькую сегментацию (<100 вокселей)
+        elif total_voxels < 100:
+            quality_issues.append(f"Very small segmentation: {total_voxels} voxels")
+        
+        # 3. Проверка на слишком большой файл (>100MB для одной почки)
+        if file_size_mb > 100:
+            quality_issues.append(f"Oversized file: {file_size_mb:.1f}MB")
+        
+        # 4. Проверка на аномальные размеры
+        if np.any(np.array(data.shape) > 1000):
+            quality_issues.append(f"Anomalous dimensions: {data.shape}")
+        
+        # 5. Проверка на наличие NaN или inf значений
+        if np.any(np.isnan(data)) or np.any(np.isinf(data)):
+            quality_issues.append("Invalid values (NaN/Inf) in segmentation")
+        
+        return {
+            "valid": len(quality_issues) == 0,
+            "voxels": int(total_voxels),
+            "size_mb": round(file_size_mb, 2),
+            "shape": list(data.shape),
+            "issues": quality_issues,
+            "organ": organ_name
+        }
+        
+    except Exception as e:
+        return {
+            "valid": False,
+            "error": str(e),
+            "organ": organ_name
+        }
+
 def segment_kidneys(job_id: str, input_path: str, output_dir: str, use_downsampling: bool = True) -> Dict:
     """
     Сегментация почек с использованием TotalSegmentator
@@ -73,110 +135,145 @@ def segment_kidneys(job_id: str, input_path: str, output_dir: str, use_downsampl
     Returns:
         Dict: результат сегментации со статусом и информацией
     """
-    logger.info(f"Starting kidney segmentation for job {job_id}")
-    logger.info(f"Input: {input_path}")
-    logger.info(f"Output: {output_dir}")
-    
-    try:
-        # Создаем выходную директорию
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Определяем путь к выходным файлам
-        kidney_left_path = os.path.join(output_dir, "kidney_left.nii.gz")
-        kidney_right_path = os.path.join(output_dir, "kidney_right.nii.gz")
-        
-        # Проверяем, что входной файл существует
-        if not os.path.exists(input_path):
-            raise SegmentationError(f"Input file not found: {input_path}")
-        
-        # Определяем, нужно ли уменьшать изображение
-        actual_input_path = input_path
-        temp_files = []
-        
-        if use_downsampling and input_path.endswith('.nii.gz'):
-            try:
-                # Проверяем размер изображения
-                img = nib.load(input_path)
-                total_voxels = np.prod(img.shape)
-                
-                # Если изображение слишком большое, уменьшаем его
-                if total_voxels > 50 * 1024 * 1024:  # > 50M вокселей
-                    logger.info(f"Large image detected ({total_voxels} voxels), downsampling...")
-                    actual_input_path = downsample_for_segmentation(input_path)
-                    temp_files.append(actual_input_path)
-                    
-            except Exception as e:
-                logger.warning(f"Failed to check image size: {e}")
-        
+    with measure_time(logger, f"kidney segmentation", {"job_id": job_id}):
         try:
+            logger.info(f"Starting kidney segmentation for job {job_id}")
+            logger.info(f"Input: {input_path}")
+            logger.info(f"Output: {output_dir}")
+            
+            # Создаем выходную директорию
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Определяем путь к выходным файлам
+            kidney_left_path = os.path.join(output_dir, "kidney_left.nii.gz")
+            kidney_right_path = os.path.join(output_dir, "kidney_right.nii.gz")
+            
+            # Проверяем, что входной файл существует
+            if not os.path.exists(input_path):
+                raise processing_error(
+                    f"Input file not found: {input_path}",
+                    details={"job_id": job_id, "input_path": input_path}
+                )
+            
+            # Определяем, нужно ли уменьшать изображение
+            actual_input_path = input_path
+            temp_files = []
+            
+            if use_downsampling and input_path.endswith('.nii.gz'):
+                try:
+                    # Проверяем размер изображения
+                    img = nib.load(input_path)
+                    total_voxels = np.prod(img.shape)
+                    
+                    # Если изображение слишком большое, уменьшаем его
+                    if total_voxels > 50 * 1024 * 1024:  # > 50M вокселей
+                        logger.info(f"Large image detected ({total_voxels} voxels), downsampling...")
+                        actual_input_path = downsample_for_segmentation(input_path)
+                        temp_files.append(actual_input_path)
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to check image size: {e}")
+            
             # Запускаем сегментацию
             logger.info("Running TotalSegmentator...")
             
-            totalsegmentator(
-                input=actual_input_path,
-                output=output_dir,
-                ml=True,
-                nr_thr_resamp=1,
-                nr_thr_saving=1,
-                roi_subset=["kidney_left", "kidney_right"],
-                fast=True,
-                device="cpu"
-            )
+            try:
+                totalsegmentator(
+                    input=actual_input_path,
+                    output=output_dir,
+                    ml=True,
+                    nr_thr_resamp=1,
+                    nr_thr_saving=1,
+                    roi_subset=["kidney_left", "kidney_right"],
+                    fast=True,
+                    device="cpu"
+                )
+                
+                logger.info("Segmentation completed successfully!")
+                
+            except subprocess.CalledProcessError as e:
+                raise processing_error(
+                    f"TotalSegmentator failed with exit code {e.returncode}",
+                    original_error=e,
+                    details={"job_id": job_id, "exit_code": e.returncode}
+                )
+            except MemoryError as e:
+                raise memory_error(
+                    "Memory error during segmentation - try smaller image or more RAM",
+                    original_error=e,
+                    details={"job_id": job_id}
+                )
             
-            logger.info("Segmentation completed successfully!")
-            
-            # Проверяем результат
+            # Проверяем результат с валидацией качества
             results = {}
             
+            # Валидация левой почки
             if os.path.exists(kidney_left_path):
-                left_img = nib.load(kidney_left_path)
-                left_data = left_img.get_fdata()
-                left_voxels = np.sum(left_data > 0)
-                left_size_mb = os.path.getsize(kidney_left_path) / (1024 * 1024)
-                
-                results["kidney_left"] = {
-                    "file": "kidney_left.nii.gz",
-                    "voxels": int(left_voxels),
-                    "size_mb": round(left_size_mb, 2),
-                    "shape": list(left_img.shape)
-                }
-                logger.info(f"Left kidney: {left_voxels} voxels, {left_size_mb:.2f} MB")
+                left_validation = validate_segmentation_quality(kidney_left_path, "kidney_left")
+                if left_validation["valid"]:
+                    results["kidney_left"] = {
+                        "file": "kidney_left.nii.gz",
+                        "voxels": left_validation["voxels"],
+                        "size_mb": left_validation["size_mb"],
+                        "shape": left_validation["shape"],
+                        "quality": "good"
+                    }
+                    logger.info(f"✅ Left kidney: {left_validation['voxels']} voxels, {left_validation['size_mb']:.2f} MB")
+                else:
+                    results["kidney_left"] = {
+                        "error": "Poor quality segmentation",
+                        "issues": left_validation.get("issues", left_validation.get("error", "Unknown error")),
+                        "quality": "poor"
+                    }
+                    logger.warning(f"❌ Left kidney quality issues: {left_validation.get('issues', left_validation.get('error'))}")
             else:
                 logger.warning("Left kidney segmentation not found")
-                results["kidney_left"] = {"error": "Segmentation not found"}
+                results["kidney_left"] = {"error": "Segmentation not found", "quality": "missing"}
             
+            # Валидация правой почки
             if os.path.exists(kidney_right_path):
-                right_img = nib.load(kidney_right_path)
-                right_data = right_img.get_fdata()
-                right_voxels = np.sum(right_data > 0)
-                right_size_mb = os.path.getsize(kidney_right_path) / (1024 * 1024)
-                
-                results["kidney_right"] = {
-                    "file": "kidney_right.nii.gz",
-                    "voxels": int(right_voxels),
-                    "size_mb": round(right_size_mb, 2),
-                    "shape": list(right_img.shape)
-                }
-                logger.info(f"Right kidney: {right_voxels} voxels, {right_size_mb:.2f} MB")
+                right_validation = validate_segmentation_quality(kidney_right_path, "kidney_right")
+                if right_validation["valid"]:
+                    results["kidney_right"] = {
+                        "file": "kidney_right.nii.gz",
+                        "voxels": right_validation["voxels"],
+                        "size_mb": right_validation["size_mb"],
+                        "shape": right_validation["shape"],
+                        "quality": "good"
+                    }
+                    logger.info(f"✅ Right kidney: {right_validation['voxels']} voxels, {right_validation['size_mb']:.2f} MB")
+                else:
+                    results["kidney_right"] = {
+                        "error": "Poor quality segmentation",
+                        "issues": right_validation.get("issues", right_validation.get("error", "Unknown error")),
+                        "quality": "poor"
+                    }
+                    logger.warning(f"❌ Right kidney quality issues: {right_validation.get('issues', right_validation.get('error'))}")
             else:
                 logger.warning("Right kidney segmentation not found")
-                results["kidney_right"] = {"error": "Segmentation not found"}
+                results["kidney_right"] = {"error": "Segmentation not found", "quality": "missing"}
             
-            # Сохраняем статус задачи
-            status_file = os.path.join(output_dir, "status.json")
-            status_data = {
-                "job_id": job_id,
-                "status": "completed",
-                "segmentation": results
+            # Общая оценка качества
+            quality_summary = {
+                "total_organs": len(results),
+                "good_quality": len([r for r in results.values() if r.get("quality") == "good"]),
+                "poor_quality": len([r for r in results.values() if r.get("quality") == "poor"]),
+                "missing": len([r for r in results.values() if r.get("quality") == "missing"])
             }
             
-            with open(status_file, 'w') as f:
-                json.dump(status_data, f, indent=2)
+            logger.info(f"Quality summary: {quality_summary['good_quality']} good, {quality_summary['poor_quality']} poor, {quality_summary['missing']} missing")
+            
+            # Если обе почки имеют плохое качество или отсутствуют, считаем сегментацию неудачной
+            if quality_summary["good_quality"] == 0:
+                raise processing_error(
+                    f"No valid segmentation results. Quality summary: {quality_summary}",
+                    details={"job_id": job_id, "quality_summary": quality_summary}
+                )
             
             return {
-                "status": "success",
-                "job_id": job_id,
-                "results": results
+                "results": results,
+                "quality_summary": quality_summary,
+                "success": quality_summary["good_quality"] > 0
             }
             
         finally:
@@ -188,35 +285,6 @@ def segment_kidneys(job_id: str, input_path: str, output_dir: str, use_downsampl
                         logger.info(f"Removed temporary file: {temp_file}")
                 except Exception as e:
                     logger.warning(f"Failed to remove temporary file {temp_file}: {e}")
-        
-    except subprocess.CalledProcessError as e:
-        error_msg = f"TotalSegmentator failed with exit code {e.returncode}"
-        logger.error(error_msg)
-        raise SegmentationError(error_msg)
-        
-    except MemoryError as e:
-        error_msg = "Memory error during segmentation - try smaller image or more RAM"
-        logger.error(error_msg)
-        raise SegmentationError(error_msg)
-        
-    except Exception as e:
-        error_msg = f"Segmentation failed: {str(e)}"
-        logger.error(error_msg)
-        
-        # Сохраняем статус ошибки
-        try:
-            status_file = os.path.join(output_dir, "status.json")
-            status_data = {
-                "job_id": job_id,
-                "status": "error",
-                "error": error_msg
-            }
-            with open(status_file, 'w') as f:
-                json.dump(status_data, f, indent=2)
-        except Exception as save_error:
-            logger.error(f"Failed to save error status: {save_error}")
-        
-        raise SegmentationError(error_msg)
 
 if __name__ == "__main__":
     # Тестовый запуск
