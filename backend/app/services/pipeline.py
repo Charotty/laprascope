@@ -133,6 +133,22 @@ def run_pipeline(job_id: str, input_path: str) -> Dict:
             segmentation_input = str(dicom_dir)
             logger.info(f"Using original DICOM directory: {segmentation_input}")
         
+        # Предобработка DICOM для исправления проблем с ориентацией
+        preprocessed_dicom_dir = Path(job_dir) / "dicom_preprocessed"
+        
+        try:
+            logger.info("Preprocessing DICOM files to fix orientation issues...")
+            from ..preprocess_dicom import fix_dicom_orientation_issue
+            
+            if fix_dicom_orientation_issue(segmentation_input, str(preprocessed_dicom_dir)):
+                segmentation_input = str(preprocessed_dicom_dir)
+                logger.info(f"Using preprocessed DICOM directory: {segmentation_input}")
+            else:
+                logger.warning("DICOM preprocessing failed, trying original files")
+                
+        except Exception as e:
+            logger.warning(f"DICOM preprocessing error: {e}, using original files")
+        
         try:
             segmentation_result = segment_kidneys(job_id, segmentation_input, str(nifti_dir))
             
