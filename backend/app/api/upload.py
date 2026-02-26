@@ -16,8 +16,8 @@ from fastapi.responses import JSONResponse
 # Добавляем путь к venv для импорта
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / ".venv" / "Lib" / "site-packages"))
 
-from services.pipeline import run_pipeline, create_job, PipelineError
-from config import UPLOADS_DIR, JOBS_DIR, MAX_UPLOAD_SIZE
+from ..services.pipeline import run_pipeline, create_job, PipelineError
+from ..config import UPLOADS_DIR, JOBS_DIR, MAX_UPLOAD_SIZE
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

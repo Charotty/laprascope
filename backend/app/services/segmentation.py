@@ -13,8 +13,8 @@ import json
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / ".venv" / "Lib" / "site-packages"))
 
 # Импортируем наши модули
-from utils.logging_config import get_logger, measure_time
-from utils.errors import processing_error, memory_error, handle_exception
+from ..utils.logging_config import get_logger, measure_time
+from ..utils.errors import processing_error, memory_error, handle_exception
 
 try:
     from totalsegmentator.python_api import totalsegmentator
