@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Патч для исправления проблем с PyTorch 2.6 и totalsegmentator
+Простой патч для исправления проблем с PyTorch 2.6 и totalsegmentator
 """
+import os
 import torch
 import numpy as np
 import logging
@@ -13,6 +14,9 @@ def patch_pytorch_for_totalsegmentator():
     Применяет патчи для совместимости с PyTorch 2.6
     """
     try:
+        # Устанавливаем переменные окружения для PyTorch
+        os.environ['TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD'] = '1'
+        
         # Добавляем numpy типы в безопасные глобальные переменные
         numpy_globals = [
             (np.core.multiarray._reconstruct, "numpy.core.multiarray._reconstruct"),
@@ -36,6 +40,7 @@ def patch_pytorch_for_totalsegmentator():
         torch.serialization.add_safe_globals(numpy_globals + torch_globals)
         
         logger.info("✅ PyTorch 2.6 compatibility patch applied successfully")
+        logger.info("🔧 TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 set")
         logger.info(f"📋 Added {len(numpy_globals)} NumPy globals and {len(torch_globals)} PyTorch globals")
         
         return True
@@ -43,34 +48,6 @@ def patch_pytorch_for_totalsegmentator():
     except Exception as e:
         logger.error(f"❌ Failed to apply PyTorch compatibility patch: {e}")
         return False
-
-def patch_torch_load_for_legacy_models():
-    """
-    Создает безопасную версию torch.load для старых моделей
-    """
-    original_torch_load = torch.load
-    
-    def safe_torch_load(f, *args, **kwargs):
-        """
-        Безопасная загрузка моделей с fallback на weights_only=False
-        """
-        try:
-            # Сначала пробуем с weights_only=True (безопасно)
-            return original_torch_load(f, *args, weights_only=True, **kwargs)
-        except Exception as e:
-            if "weights_only" in str(e).lower() or "unsupported global" in str(e).lower():
-                logger.warning(f"⚠️ Safe load failed, trying with weights_only=False: {e}")
-                # Fallback на старый режим (только если доверяем источнику)
-                return original_torch_load(f, *args, weights_only=False, **kwargs)
-            else:
-                # Другая ошибка, пробуем оригинальный метод
-                return original_torch_load(f, *args, **kwargs)
-    
-    # Заменяем torch.load
-    torch.load = safe_torch_load
-    logger.info("🔧 torch.load patched for legacy model compatibility")
-    
-    return original_torch_load
 
 def apply_all_patches():
     """
@@ -80,15 +57,8 @@ def apply_all_patches():
     
     success = True
     
-    # Патч для безопасных глобальных переменных
+    # Патч для безопасных глобальных переменных и переменных окружения
     if not patch_pytorch_for_totalsegmentator():
-        success = False
-    
-    # Патч для torch.load
-    try:
-        patch_torch_load_for_legacy_models()
-    except Exception as e:
-        logger.error(f"❌ Failed to patch torch.load: {e}")
         success = False
     
     if success:
