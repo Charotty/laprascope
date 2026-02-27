@@ -149,101 +149,73 @@ def segment_kidneys(job_id: str, input_path: str, output_dir: str, use_downsampl
             
             # Создаем выходную директорию
             os.makedirs(output_dir, exist_ok=True)
-            
-            # Определяем путь к выходным файлам
-            kidney_left_path = os.path.join(output_dir, "kidney_left.nii.gz")
-            kidney_right_path = os.path.join(output_dir, "kidney_right.nii.gz")
-            
-            # Проверяем, что входной файл существует
-            if not os.path.exists(input_path):
-                raise processing_error(
-                    f"Input file not found: {input_path}",
-                    details={"job_id": job_id, "input_path": input_path}
-                )
-            
-            # Определяем, нужно ли уменьшать изображение
             actual_input_path = input_path
-            temp_files = []
+        
+        # Проверяем размер файла
+        if os.path.isfile(actual_input_path):
+            file_size = os.path.getsize(actual_input_path) / (1024 * 1024)  # MB
+            logger.info(f"📊 NIfTI file size: {file_size:.2f} MB")
             
-            if use_downsampling and input_path.endswith('.nii.gz'):
-                try:
-                    # Проверяем размер изображения
-                    img = nib.load(input_path)
-                    total_voxels = np.prod(img.shape)
-                    
-                    # Если изображение слишком большое, уменьшаем его
-                    if total_voxels > 50 * 1024 * 1024:  # > 50M вокселей
-                        logger.info(f"Large image detected ({total_voxels} voxels), downsampling...")
-                        actual_input_path = downsample_for_segmentation(input_path)
-                        temp_files.append(actual_input_path)
-                        
-                except Exception as e:
-                    logger.warning(f"Failed to check image size: {e}")
-            
-            # Запускаем сегментацию
-            logger.info("Running TotalSegmentator...")
-            
-            try:
-                totalsegmentator(
-                    input=actual_input_path,
-                    output=output_dir,
-                    ml=True,
-                    nr_thr_resamp=1,
-                    nr_thr_saving=1,
-                    roi_subset=["kidney_left", "kidney_right"],
-                    fast=True,
-                    device="cpu"
-                )
-                
-                logger.info("Segmentation completed successfully!")
-                
-            except subprocess.CalledProcessError as e:
-                raise processing_error(
-                    f"TotalSegmentator failed with exit code {e.returncode}",
-                    original_error=e,
-                    details={"job_id": job_id, "exit_code": e.returncode}
-                )
-            except MemoryError as e:
-                raise memory_error(
-                    "Memory error during segmentation - try smaller image or more RAM",
-                    original_error=e,
-                    details={"job_id": job_id}
-                )
-            except Exception as e:
-                # Обрабатываем специфичные ошибки DICOM
-                if "IMAGE_ORIENTATION_INCONSISTENT" in str(e):
-                    raise processing_error(
-                        "DICOM orientation inconsistency detected. This may be due to mixed scan protocols or corrupted DICOM files. Try rescanning or using different DICOM files.",
-                        original_error=e,
-                        details={
-                            "job_id": job_id,
-                            "error_type": "DICOM_ORIENTATION_ERROR",
-                            "suggestion": "Check DICOM files for consistent slice orientation or try reorienting the images"
-                        }
-                    )
-                else:
-                    raise processing_error(
-                        f"Segmentation failed: {str(e)}",
-                        original_error=e,
-                        details={"job_id": job_id}
-                    )
-            
-            # Проверяем результат с валидацией качества
-            results = {}
-            
-            # Валидация левой почки
-            if os.path.exists(kidney_left_path):
-                left_validation = validate_segmentation_quality(kidney_left_path, "kidney_left")
-                if left_validation["valid"]:
-                    results["kidney_left"] = {
-                        "file": "kidney_left.nii.gz",
-                        "voxels": left_validation["voxels"],
-                        "size_mb": left_validation["size_mb"],
-                        "shape": left_validation["shape"],
-                        "quality": "good"
-                    }
-                    logger.info(f"✅ Left kidney: {left_validation['voxels']} voxels, {left_validation['size_mb']:.2f} MB")
-                else:
+            if file_size > 1000:  # > 1GB
+                logger.warning("⚠️ Large file detected, this may take a long time")
+        
+        # Создаем выходную директорию
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Определяем путь к выходным файлам
+        kidney_left_path = os.path.join(output_dir, "kidney_left.nii.gz")
+        kidney_right_path = os.path.join(output_dir, "kidney_right.nii.gz")
+        
+        # Запускаем сегментацию с таймаутом
+        import signal
+        import subprocess
+        
+        def timeout_handler(signum, frame):
+            raise TimeoutError("Segmentation timed out after 30 minutes")
+        
+        # Устанавливаем таймаут
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(1800)  # 30 минут
+        
+        try:
+            logger.info("🚀 Starting TotalSegmentator...")
+            totalsegmentator(
+                input=actual_input_path,
+                output=output_dir,
+                ml=True,
+                nr_thr_resamp=1,
+                nr_thr_saving=1,
+                roi_subset=["kidney_left", "kidney_right"],
+                fast=True,
+                device="cpu"
+            )
+            signal.alarm(0)  # Отменяем таймаут
+        except TimeoutError:
+            logger.error("⏰ Segmentation timed out after 30 minutes")
+            raise processing_error(
+                "Segmentation timed out. The DICOM file may be too large or corrupted.",
+                details={"job_id": job_id, "timeout": "30 minutes"}
+            )
+        
+        # Проверяем результат
+        if not os.path.exists(kidney_left_path) and not os.path.exists(kidney_right_path):
+            raise FileNotFoundError("No kidney segmentation results found")
+        
+        # Проверяем качество сегментации
+        results = {}
+        
+        # Валидация левой почки
+        if os.path.exists(kidney_left_path):
+            left_validation = validate_segmentation_quality(kidney_left_path, "kidney_left")
+            if left_validation["valid"]:
+                results["kidney_left"] = {
+                    "file": "kidney_left.nii.gz",
+                    "voxels": left_validation["voxels"],
+                    "size_mb": left_validation["size_mb"],
+                    "shape": left_validation["shape"],
+                    "quality": "good"
+                }
+                logger.info(f"✅ Left kidney: {left_validation['voxels']} voxels, {left_validation['size_mb']:.2f} MB")
                     results["kidney_left"] = {
                         "error": "Poor quality segmentation",
                         "issues": left_validation.get("issues", left_validation.get("error", "Unknown error")),
